@@ -14,32 +14,47 @@ import axios from "axios";
 import Feather from "@expo/vector-icons/Feather";
 import FontAwesome6 from "@expo/vector-icons/FontAwesome6";
 import MessageBubble from "../components/MessageBubble";
+import { socket } from "../utils/socket";
 
 const API_URL = "http://localhost:4000"; 
 
 type Msg = {
   _id: string;
   text: string;
-  isOwn?: boolean;
   createdAt?: string;
 };
 
 export default function ChatScreen() {
-  const [messages, setMessages] = useState<Msg[]>([]); // newest -> oldest
+  const [messages, setMessages] = useState<Msg[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [text, setText] = useState("");
   const flatListRef = useRef<FlatList<Msg>>(null);
 
-  // ---- Load messages (older pages append to the END) ----
+  // ---- Socket listeners ----
+  useEffect(() => {
+    socket.on("receiveMessage", (message: Msg) => {
+      setMessages((prev) => [message, ...prev]); // newest at top
+    });
+
+    socket.on("messageDeleted", ({ id }: { id: string }) => {
+      setMessages((prev) => prev.filter((msg) => msg._id !== id));
+    });
+
+    return () => {
+      socket.off("receiveMessage");
+      socket.off("messageDeleted");
+    };
+  }, []);
+
+  // ---- Load messages (paginated REST) ----
   const loadMessages = async () => {
     if (loading || !hasMore) return;
     try {
       setLoading(true);
       const res = await axios.get(`${API_URL}/messages?page=${page}&limit=20`);
-      const batch: Msg[] = res.data.messages; // backend returns newest first
-      // keep array newest -> oldest; older pages go to the end
+      const batch: Msg[] = res.data.messages;
       setMessages((prev) => (page === 1 ? batch : [...prev, ...batch]));
       setHasMore(res.data.hasMore);
     } catch (err) {
@@ -50,16 +65,19 @@ export default function ChatScreen() {
     }
   };
 
-  // ---- Send new message (PREPEND to keep newest at index 0) ----
+  // ---- Send new message ----
   const sendMessage = async () => {
     if (!text.trim()) return;
     try {
-      const res = await axios.post(`${API_URL}/messages`, { text });
-      const newMessage: Msg = res.data; // POST returns the message object
-      setMessages((prev) => [newMessage, ...prev]); // << PREPEND
+      // only call REST — backend will emit socket event automatically
+      await axios.post(`${API_URL}/messages`, { text });
       setText("");
-      // with inverted FlatList, offset 0 is the visual bottom
-      setTimeout(() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 50);
+
+      // scroll to latest after small delay
+      setTimeout(
+        () => flatListRef.current?.scrollToOffset({ offset: 0, animated: true }),
+        50
+      );
     } catch (err: any) {
       console.error(err);
       if (err.response?.status === 404) {
@@ -70,18 +88,19 @@ export default function ChatScreen() {
     }
   };
 
-  // initial load & further pages
-  useEffect(() => { loadMessages(); }, [page]);
-
-  // scroll to bottom on first load
-  useEffect(() => {
-    if (messages.length && page === 1) {
-      // for inverted list, bottom == offset 0
-      requestAnimationFrame(() =>
-        flatListRef.current?.scrollToOffset({ offset: 0, animated: false })
-      );
+  const deleteMessage = async (id: string) => {
+    try {
+      await axios.delete(`${API_URL}/messages/${id}`);
+      // UI will auto-update when server emits "messageDeleted"
+    } catch (error) {
+      console.error("Failed to delete:", error);
     }
-  }, [messages.length, page]);
+  };
+
+  // initial load & further pages
+  useEffect(() => {
+    loadMessages();
+  }, [page]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -89,7 +108,10 @@ export default function ChatScreen() {
         {/* Header */}
         <View style={styles.headerContainer}>
           <View style={styles.header}>
-            <Image source={require("../../assets/favicon.png")} style={styles.foto} />
+            <Image
+              source={require("../../assets/favicon.png")}
+              style={styles.foto}
+            />
             <Text style={styles.headerText}>Sohail</Text>
           </View>
           <View style={styles.header}>
@@ -97,23 +119,29 @@ export default function ChatScreen() {
             <Feather name="phone-call" size={24} color="black" />
           </View>
         </View>
+
         {/* Messages */}
         <FlatList
           ref={flatListRef}
           data={messages}
-          inverted // show index 0 at the visual bottom
+          inverted
           keyExtractor={(item, index) => item._id ?? String(index)}
           renderItem={({ item }) => (
-            <MessageBubble isOwn={item.isOwn} text={item.text} />
+            <MessageBubble
+              isOwn={false} // TODO: set based on logged-in user
+              text={item.text}
+              createdAt={item.createdAt}
+              onDelete={() => deleteMessage(item._id)}
+            />
           )}
-          // With inverted lists, onEndReached fires when the user scrolls to the TOP (older)
           onEndReachedThreshold={0.2}
           onEndReached={() => {
-            if (!loading && hasMore) setPage((p) => p + 1); // load older
+            if (!loading && hasMore) setPage((p) => p + 1);
           }}
-          // Keep the scroll anchored when we prepend/append
           maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
-          ListFooterComponent={loading ? <Text style={{ textAlign: "center" }}>Loading…</Text> : null}
+          ListFooterComponent={
+            loading ? <Text style={{ textAlign: "center" }}>Loading…</Text> : null
+          }
         />
 
         {/* Composer */}

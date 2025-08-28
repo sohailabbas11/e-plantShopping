@@ -9,14 +9,18 @@ import {
 } from "react-native";
 
 type MessageBubbleProps = {
+  id: string; // ✅ add id prop
   text: string;
+  createdAt: string | Date;
   isOwn?: boolean;
-  onDelete?: () => void;
+  onDelete?: (id: string) => void; // ✅ let parent handle deletion
   onForward?: () => void;
 };
 
 export default function MessageBubble({
+  id,
   text,
+  createdAt,
   isOwn,
   onDelete,
   onForward,
@@ -31,6 +35,13 @@ export default function MessageBubble({
     setShowOptions(false);
   };
 
+  const formattedTime = createdAt
+    ? new Date(createdAt).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
+
   return (
     <View>
       <TouchableOpacity
@@ -41,6 +52,14 @@ export default function MessageBubble({
         ]}
       >
         <Text style={styles.text}>{text}</Text>
+        <Text
+          style={[
+            styles.date,
+            isOwn ? { color: "rgba(255,255,255,0.7)" } : { color: "gray" },
+          ]}
+        >
+          {formattedTime}
+        </Text>
       </TouchableOpacity>
 
       {/* Options Modal */}
@@ -56,7 +75,7 @@ export default function MessageBubble({
               <TouchableOpacity
                 style={styles.option}
                 onPress={() => {
-                  onDelete?.();
+                  onDelete?.(id); // ✅ call parent to delete
                   closeOptions();
                 }}
               >
@@ -86,7 +105,7 @@ export default function MessageBubble({
 
 const styles = StyleSheet.create({
   bubble: {
-    padding: 12,
+    padding: 10,
     marginVertical: 5,
     borderRadius: 12,
     maxWidth: "75%",
@@ -101,6 +120,12 @@ const styles = StyleSheet.create({
   },
   text: {
     color: "black",
+    fontSize: 16,
+  },
+  date: {
+    fontSize: 10,
+    alignSelf: "flex-end",
+    marginTop: 4,
   },
   overlay: {
     flex: 1,
